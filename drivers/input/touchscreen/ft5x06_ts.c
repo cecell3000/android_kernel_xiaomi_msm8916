@@ -35,6 +35,11 @@
 #include <linux/fs.h>
 #include <asm/uaccess.h>
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+#include <linux/input/prevent_sleep.h>
+bool dit_suspend = false;
+#endif
+
 #if  WT_ADD_CTP_INFO
 #include <linux/hardware_info.h>
 #endif
@@ -561,6 +566,9 @@ static int ft5x06_ts_suspend(struct device *dev)
 	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
 	char txbuf[2], i;
 	int err;
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	bool prevent_sleep = false;
+#endif
 
 	if (data->loading_fw) {
 		dev_info(dev, "Firmware loading in process...\n");
@@ -572,7 +580,23 @@ static int ft5x06_ts_suspend(struct device *dev)
 		return 0;
 	}
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	ts_get_prevent_sleep(prevent_sleep);
+	DT2W_PRINFO("%s: Prevent Sleep is computed as '%s'\n",
+			__func__, (prevent_sleep) ? "yes" : "no");
+	if (!prevent_sleep) {
+		DT2W_PRINFO("%s: IRQ now disable_irq()\n", __func__);
+		disable_irq(data->client->irq);
+		dit_suspend = false;
+	} else {
+		DT2W_PRINFO("%s: IRQ now enable_irq_wake()\n", __func__);
+		enable_irq_wake(data->client->irq);
+		dit_suspend = true;
+	}
+#else
+
 	disable_irq(data->client->irq);
+#endif /* CONFIG_TOUCHSCREEN_PREVENT_SLEEP */
 
 	/* release all touches */
 	for (i = 0; i < data->pdata->num_max_touches; i++) {
@@ -584,7 +608,12 @@ static int ft5x06_ts_suspend(struct device *dev)
 
 	if (gpio_is_valid(data->pdata->reset_gpio)) {
 		txbuf[0] = FT_REG_PMODE;
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+		txbuf[1] = (!prevent_sleep) ? FT_PMODE_HIBERNATE :
+			FT_PMODE_MONITOR;
+#else
 		txbuf[1] = FT_PMODE_HIBERNATE;
+#endif
 		err = ft5x06_i2c_write(data->client, txbuf, sizeof(txbuf));
 
 		msleep(data->pdata->hard_rst_dly);
@@ -606,6 +635,15 @@ static int ft5x06_ts_suspend(struct device *dev)
 
 	data->suspended = true;
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	if (prevent_sleep) {
+		/* disable the key panel touches */
+		__clear_bit(EV_KEY, data->input_dev->evbit);
+		input_sync(data->input_dev);
+	}
+	data->prevent_sleep = prevent_sleep;
+#endif
+
 	return 0;
 
 
@@ -619,10 +657,46 @@ pwr_off_fail:
 	return err;
 }
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+static int dt2w_toggle_rebalance_irq(struct device *dev)
+{
+	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
+
+	/* 
+	 * Prema Chand Alugu (premaca@gmail.com)
+	 *
+	 * This function must be called only when we know that prevent_sleep state
+	 * has been changed while the screen off.
+	 */
+	if (data->prevent_sleep) {
+		// we have been with wake irqs so far [enable_irq_wake()]
+		disable_irq_wake(data->client->irq);
+		disable_irq(data->client->irq);
+		DT2W_PRINFO("%s: IRQ now disable_irq_wake()\n", __func__);
+		DT2W_PRINFO("%s: IRQ now disable_irq()\n", __func__);
+		DT2W_PRINFO("%s: Rebalanced IRQ while dt2w OFF "
+				"during screen-off\n", __func__);
+	} else {
+		// we have been with irqs so far [disable_irq()]
+		enable_irq(data->client->irq);
+		enable_irq_wake(data->client->irq);
+		DT2W_PRINFO("%s: IRQ now enable_irq()\n", __func__);
+		DT2W_PRINFO("%s: IRQ now enable_irq_wake()\n", __func__);
+		DT2W_PRINFO("%s: Rebalanced IRQ while dt2w ON "
+				"during screen-off\n", __func__);
+	}
+
+	return 0;
+}
+#endif
+
 static int ft5x06_ts_resume(struct device *dev)
 {
 	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
 	int err;
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	bool prevent_sleep = false;
+#endif
 
 	if (!data->suspended) {
 		dev_dbg(dev, "Already in awake state\n");
@@ -652,7 +726,38 @@ static int ft5x06_ts_resume(struct device *dev)
 
 	msleep(data->pdata->soft_rst_dly);
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	ts_get_prevent_sleep(prevent_sleep);
+	if (prevent_sleep != data->prevent_sleep) {
+		/* 
+		 * Prema Chand Alugu (premaca@gmail.com)
+		 *
+		 * simply the rebalance requirement; the prevent_sleep state is
+		 * stored in the dev structure, if there is any change while
+		 * the screen was off, we definitely need to rebalance
+		 * the state could be changed by the following known events
+		 * 1. toggled has been modified while screen was off
+		 * 2. in_phone_call state changed while screen was off
+		 */
+	    dt2w_toggle_rebalance_irq(dev);
+	}
+	DT2W_PRINFO("%s: Prevent Sleep is computed as '%s'\n",
+			__func__, (prevent_sleep) ? "yes" : "no");
+	/* enable the key panel touches back again */
+	__set_bit(EV_KEY, data->input_dev->evbit);
+	input_sync(data->input_dev);
+
+	if (prevent_sleep) {
+		DT2W_PRINFO("%s: IRQ now disable_irq_wake()\n", __func__);
+		disable_irq_wake(data->client->irq);
+	} else {
+		DT2W_PRINFO("%s: IRQ now enable_irq()\n", __func__);
+		enable_irq(data->client->irq);
+	}
+#else
+
 	enable_irq(data->client->irq);
+#endif /* CONFIG_TOUCHSCREEN_PREVENT_SLEEP */
 
 #if CTP_CHARGER_DETECT
 	batt_psy = power_supply_get_by_name("usb");
@@ -673,6 +778,9 @@ static int ft5x06_ts_resume(struct device *dev)
 
 
 	data->suspended = false;
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	data->prevent_sleep = prevent_sleep;
+#endif
 
 	return 0;
 }
@@ -994,7 +1102,6 @@ static int ft5x06_fw_upgrade_start(struct i2c_client *client,
 	return 0;
 }
 
-#if CTP_LOCKDOWN_INFO
 static void fts_ctpm_read_lockdown(struct i2c_client *client, struct ft5x06_ts_data *data)
 {
 	u8 buf[128];
@@ -1071,7 +1178,6 @@ static void fts_ctpm_read_lockdown(struct i2c_client *client, struct ft5x06_ts_d
 				   lockdown_info[6], lockdown_info[7]);
 
 }
-#endif
 
 #if TPD_AUTO_UPGRADE
 static unsigned char CTPM_FW1[] = {
@@ -2191,6 +2297,7 @@ static int hardwareinfo_set(struct ft5x06_ts_data *data, u8 value_name)
 	char firmware_ver[HARDWARE_MAX_ITEM_LONGTH];
 	char vendor_for_id[HARDWARE_MAX_ITEM_LONGTH];
 	char ic_name[HARDWARE_MAX_ITEM_LONGTH];
+	int err;
 
 	if (data->fw_vendor_id == VENDOR_BIEL_1080P)
 		snprintf(vendor_for_id, HARDWARE_MAX_ITEM_LONGTH, "BIEL_1080P");
@@ -2631,7 +2738,12 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 
 	err = request_threaded_irq(client->irq, NULL,
 							   ft5x06_ts_interrupt,
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+							   pdata->irq_gpio_flags | IRQF_ONESHOT
+							   | IRQF_NO_SUSPEND,
+#else
 							   pdata->irq_gpio_flags | IRQF_ONESHOT,
+#endif
 							   client->dev.driver->name, data);
 	if (err) {
 		dev_err(&client->dev, "request irq failed\n");

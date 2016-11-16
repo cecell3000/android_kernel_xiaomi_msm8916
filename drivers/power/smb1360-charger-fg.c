@@ -912,6 +912,7 @@ static int smb1360_get_prop_batt_status(struct smb1360_chip *chip)
 {
 	int rc;
 	u8 reg = 0, chg_type;
+#if 0
 	union power_supply_propval prop = {0,};
 
 	rc = chip->usb_psy->get_property(chip->usb_psy,
@@ -920,6 +921,9 @@ static int smb1360_get_prop_batt_status(struct smb1360_chip *chip)
 		pr_err("Couldn't not read USB ONLINE property, rc=%d\n", rc);
 
 	if (chip->batt_full && prop.intval)
+#else
+	if (chip->batt_full)
+#endif
 		return POWER_SUPPLY_STATUS_FULL;
 
 	rc = smb1360_read(chip, STATUS_3_REG, &reg);

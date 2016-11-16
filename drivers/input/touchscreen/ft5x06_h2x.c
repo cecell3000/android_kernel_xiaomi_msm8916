@@ -35,6 +35,11 @@
 #include <linux/fs.h>
 #include <asm/uaccess.h>
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+#include <linux/input/prevent_sleep.h>
+bool dit_suspend = false;
+#endif
+
 #include <linux/hardware_info.h>
 
 #if CTP_CHARGER_DETECT
@@ -104,8 +109,8 @@ struct Upgrade_Info fts_updateinfo[] = {
 static char binfilename[50] = {"\0"};
 static int binfilelen;
 
-static s32 ctp_version_read(struct file *file, char __user *user_buf, size_t count, loff_t *ppos);
-static s32 ctp_version_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos);
+static ssize_t ctp_version_read(struct file *file, char __user *user_buf, size_t count, loff_t *ppos);
+static ssize_t ctp_version_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos);
 static const struct file_operations ctp_version_proc_fops = {
 	.write = ctp_version_write,
 	.read = ctp_version_read,
@@ -113,8 +118,8 @@ static const struct file_operations ctp_version_proc_fops = {
 	.owner = THIS_MODULE,
 };
 
-static s32 ctp_binupdate_proc_read(struct file *file, char __user *user_buf, size_t count, loff_t *ppos);
-static s32 ctp_binupdate_proc_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos);
+static ssize_t ctp_binupdate_proc_read(struct file *file, char __user *user_buf, size_t count, loff_t *ppos);
+static ssize_t ctp_binupdate_proc_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos);
 static const struct file_operations ctp_binupdate_procs_fops = {
 	.write = ctp_binupdate_proc_write,
 	.read = ctp_binupdate_proc_read,
@@ -122,8 +127,8 @@ static const struct file_operations ctp_binupdate_procs_fops = {
 	.owner = THIS_MODULE,
 };
 
-static s32 ctp_openshort_proc_read(struct file *file, char __user *user_buf, size_t count, loff_t *ppos);
-static s32 ctp_openshort_proc_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos);
+static ssize_t ctp_openshort_proc_read(struct file *file, char __user *user_buf, size_t count, loff_t *ppos);
+static ssize_t ctp_openshort_proc_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos);
 static const struct file_operations ctp_openshort_procs_fops = {
 	.write = ctp_openshort_proc_write,
 	.read = ctp_openshort_proc_read,
@@ -131,8 +136,8 @@ static const struct file_operations ctp_openshort_procs_fops = {
 	.owner = THIS_MODULE,
 };
 
-static s32 ctp_rawdata_proc_read(struct file *file, char __user *buf, size_t count, loff_t *ppos);
-static s32 ctp_rawdata_proc_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos);
+static ssize_t ctp_rawdata_proc_read(struct file *file, char __user *buf, size_t count, loff_t *ppos);
+static ssize_t ctp_rawdata_proc_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos);
 static const struct file_operations ctp_rawdata_procs_fops = {
 	.write = ctp_rawdata_proc_write,
 	.read = ctp_rawdata_proc_read,
@@ -609,6 +614,9 @@ static int ft5x06_ts_suspend(struct device *dev)
 	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
 	char txbuf[2], i;
 	int err;
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	bool prevent_sleep = false;
+#endif
 
 	if (data->loading_fw) {
 		dev_info(dev, "Firmware loading in process...\n");
@@ -620,7 +628,22 @@ static int ft5x06_ts_suspend(struct device *dev)
 		return 0;
 	}
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	ts_get_prevent_sleep(prevent_sleep);
+	DT2W_PRINFO("%s: Prevent Sleep is computed as '%s'\n",
+			__func__, (prevent_sleep) ? "yes" : "no");
+	if (!prevent_sleep) {
+		DT2W_PRINFO("%s: IRQ now disable_irq()\n", __func__);
+		disable_irq(data->client->irq);
+		dit_suspend = false;
+	} else {
+		DT2W_PRINFO("%s: IRQ now enable_irq_wake()\n", __func__);
+		enable_irq_wake(data->client->irq);
+		dit_suspend = true;
+	}
+#else
 	disable_irq(data->client->irq);
+#endif
 
 	/* release all touches */
 	for (i = 0; i < data->pdata->num_max_touches; i++) {
@@ -632,7 +655,12 @@ static int ft5x06_ts_suspend(struct device *dev)
 
 	if (gpio_is_valid(data->pdata->reset_gpio)) {
 		txbuf[0] = FT_REG_PMODE;
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+		txbuf[1] = (!prevent_sleep) ? FT_PMODE_HIBERNATE :
+			FT_PMODE_MONITOR;
+#else
 		txbuf[1] = FT_PMODE_HIBERNATE;
+#endif
 		err = ft5x06_i2c_write(data->client, txbuf, sizeof(txbuf));
 #ifdef SUSPEND_TURNOFF_POWER
 		gpio_set_value_cansleep(data->pdata->reset_gpio, 0);
@@ -659,6 +687,15 @@ static int ft5x06_ts_suspend(struct device *dev)
 
 	data->suspended = true;
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	if (prevent_sleep) {
+		/* disable the key panel touches */
+		__clear_bit(EV_KEY, data->input_dev->evbit);
+		input_sync(data->input_dev);
+	}
+	data->prevent_sleep = prevent_sleep;
+#endif
+
 	return 0;
 
 #ifdef SUSPEND_TURNOFF_POWER
@@ -673,11 +710,47 @@ pwr_off_fail:
 #endif
 }
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+static int dt2w_toggle_rebalance_irq(struct device *dev)
+{
+	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
+
+	/* 
+	 * Prema Chand Alugu (premaca@gmail.com)
+	 *
+	 * This function must be called only when we know that prevent_sleep state
+	 * has been changed while the screen off.
+	 */
+	if (data->prevent_sleep) {
+		// we have been with wake irqs so far [enable_irq_wake()]
+		disable_irq_wake(data->client->irq);
+		disable_irq(data->client->irq);
+		DT2W_PRINFO("%s: IRQ now disable_irq_wake()\n", __func__);
+		DT2W_PRINFO("%s: IRQ now disable_irq()\n", __func__);
+		DT2W_PRINFO("%s: Rebalanced IRQ while dt2w OFF "
+				"during screen-off\n", __func__);
+	} else {
+		// we have been with irqs so far [disable_irq()]
+		enable_irq(data->client->irq);
+		enable_irq_wake(data->client->irq);
+		DT2W_PRINFO("%s: IRQ now enable_irq()\n", __func__);
+		DT2W_PRINFO("%s: IRQ now enable_irq_wake()\n", __func__);
+		DT2W_PRINFO("%s: Rebalanced IRQ while dt2w ON "
+				"during screen-off\n", __func__);
+	}
+
+	return 0;
+}
+#endif
+
 static int ft5x06_ts_resume(struct device *dev)
 {
 	struct ft5x06_ts_data *data = dev_get_drvdata(dev);
 #ifdef SUSPEND_TURNOFF_POWER
 	int err;
+#endif
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	bool prevent_sleep = false;
 #endif
 
 	if (!data->suspended) {
@@ -709,7 +782,37 @@ static int ft5x06_ts_resume(struct device *dev)
 
 	msleep(data->pdata->soft_rst_dly);
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	ts_get_prevent_sleep(prevent_sleep);
+	if (prevent_sleep != data->prevent_sleep) {
+		/* 
+		 * Prema Chand Alugu (premaca@gmail.com)
+		 *
+		 * simply the rebalance requirement; the prevent_sleep state is
+		 * stored in the dev structure, if there is any change while
+		 * the screen was off, we definitely need to rebalance
+		 * the state could be changed by the following known events
+		 * 1. toggled has been modified while screen was off
+		 * 2. in_phone_call state changed while screen was off
+		 */
+	    dt2w_toggle_rebalance_irq(dev);
+	}
+	DT2W_PRINFO("%s: Prevent Sleep is computed as '%s'\n",
+			__func__, (prevent_sleep) ? "yes" : "no");
+	/* enable the key panel touches back again */
+	__set_bit(EV_KEY, data->input_dev->evbit);
+	input_sync(data->input_dev);
+
+	if (prevent_sleep) {
+		DT2W_PRINFO("%s: IRQ now disable_irq_wake()\n", __func__);
+		disable_irq_wake(data->client->irq);
+	} else {
+		DT2W_PRINFO("%s: IRQ now enable_irq()\n", __func__);
+		enable_irq(data->client->irq);
+	}
+#else
 	enable_irq(data->client->irq);
+#endif
 
 #if CTP_CHARGER_DETECT
 		batt_psy = power_supply_get_by_name("usb");
@@ -729,6 +832,9 @@ static int ft5x06_ts_resume(struct device *dev)
 
 
 	data->suspended = false;
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	data->prevent_sleep = prevent_sleep;
+#endif
 
 	return 0;
 }
@@ -2047,7 +2153,7 @@ static int ft5x06_parse_dt(struct device *dev,
 #endif
 
 #if CTP_PROC_INTERFACE
-static s32 ctp_version_read(struct file *file, char __user *user_buf, size_t count, loff_t *ppos)
+static ssize_t ctp_version_read(struct file *file, char __user *user_buf, size_t count, loff_t *ppos)
 {
 	int num, i;
 	u8 fw_info[6] = {0x00};
@@ -2065,12 +2171,12 @@ static s32 ctp_version_read(struct file *file, char __user *user_buf, size_t cou
 	*ppos += num;
 	return num;
 }
-static s32 ctp_version_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos)
+static ssize_t ctp_version_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos)
 {
 	return -EPERM;
 }
 
-static s32 ctp_binupdate_proc_read(struct file *file, char __user *user_buf, size_t count, loff_t *ppos)
+static ssize_t ctp_binupdate_proc_read(struct file *file, char __user *user_buf, size_t count, loff_t *ppos)
 {
 	if (*ppos)
 		return 0;
@@ -2078,7 +2184,7 @@ static s32 ctp_binupdate_proc_read(struct file *file, char __user *user_buf, siz
 
 	return count;
 }
-static s32 ctp_binupdate_proc_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos)
+static ssize_t ctp_binupdate_proc_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos)
 {
 	if (*ppos)
 		return 0;
@@ -2086,12 +2192,12 @@ static s32 ctp_binupdate_proc_write(struct file *filp, const char __user *userbu
 	memset(binfilename, '\0', 50);
 	memcpy(binfilename, userbuf, count);
 	binfilelen = count;
-	CTP_INFO("count %d, buf %s", count, userbuf);
+	CTP_INFO("count %d, buf %s", (unsigned int)count, userbuf);
 	ft5x0x_fwupgradeapp_store(&update_client->dev, NULL, binfilename, binfilelen);
 	return count;
 }
 
-static s32 ctp_openshort_proc_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
+static ssize_t ctp_openshort_proc_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 {
 	char *ptr = buf;
 	char cfgname[128];
@@ -2141,7 +2247,7 @@ static s32 ctp_openshort_proc_read(struct file *file, char __user *buf, size_t c
 	}
 	return count;
 }
-static s32 ctp_openshort_proc_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos)
+static ssize_t ctp_openshort_proc_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos)
 {
 	return -EPERM;
 }
@@ -2257,7 +2363,7 @@ void ctp_GetRawData(struct i2c_client *client, s32 RawData[TX_NUM_MAX][RX_NUM_MA
 s32 RawData[TX_NUM_MAX][RX_NUM_MAX];
 
 
-static s32 ctp_rawdata_proc_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
+static ssize_t ctp_rawdata_proc_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 {
 	int i, j;
 	if (*ppos)
@@ -2281,7 +2387,7 @@ static s32 ctp_rawdata_proc_read(struct file *file, char __user *buf, size_t cou
 	*ppos += count;
 	return count;
 }
-static s32 ctp_rawdata_proc_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos)
+static ssize_t ctp_rawdata_proc_write(struct file *filp, const char __user *userbuf, size_t count, loff_t *ppos)
 {
 	return -EPERM;
 }
@@ -2444,7 +2550,7 @@ int ft5x0x_i2c_Write(struct i2c_client *client, char *writebuf, int writelen)
 	return ret;
 }
 
-static s32 ft5x0x_debug_write(struct file *filp, const char __user *buff, size_t len, loff_t *ppos)
+static ssize_t ft5x0x_debug_write(struct file *filp, const char __user *buff, size_t len, loff_t *ppos)
 {
 	struct i2c_client *client = update_client;
 	unsigned char writebuf[FTS_PACKET_LENGTH];
@@ -2512,7 +2618,7 @@ static s32 ft5x0x_debug_write(struct file *filp, const char __user *buff, size_t
 unsigned char debug_read_buf[PAGE_SIZE];
 
 /*interface of read proc*/
-static s32 ft5x0x_debug_read(struct file *file, char __user *user_buf, size_t count, loff_t *ppos)
+static ssize_t ft5x0x_debug_read(struct file *file, char __user *user_buf, size_t count, loff_t *ppos)
 {
 	struct i2c_client *client = update_client;
 	int ret = 0;
@@ -2540,7 +2646,7 @@ static s32 ft5x0x_debug_read(struct file *file, char __user *user_buf, size_t co
 			dev_err(&client->dev, "%s:read iic error\n", __func__);
 			return ret;
 		} else
-			CTP_ERROR("%s:value=0x%02x, count %d\n", __func__, debug_read_buf[0], count);
+			CTP_ERROR("%s:value=0x%02x, count %d\n", __func__, debug_read_buf[0], (unsigned int)count);
 		num_read_chars = 1;
 		break;
 	case PROC_RAWDATA:

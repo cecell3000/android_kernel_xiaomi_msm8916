@@ -265,6 +265,9 @@ struct ft5x06_ts_data {
 	struct dentry *dir;
 	u16 addr;
 	bool suspended;
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	bool prevent_sleep;
+#endif
 	char *ts_info;
 	u8 *tch_data;
 	u32 tch_data_len;
@@ -291,13 +294,13 @@ struct ft5x06_ts_data {
 #define TPD_AUTO_UPGRADE 0
 #define FTS_PROC_APK_DEBUG 0
 
-#define CTP_CHARGER_DETECT 1
+#define CTP_CHARGER_DETECT 0
 
 #define CTP_PROC_INTERFACE 0
-#define CTP_LOCKDOWN_INFO  0
+#define CTP_LOCKDOWN_INFO  1
 
 
-#define WT_ADD_CTP_INFO   0
+#define WT_ADD_CTP_INFO   1
 
 #define CTP_DEBUG_ON 0
 #define CTP_DEBUG_FUNC_ON 0
