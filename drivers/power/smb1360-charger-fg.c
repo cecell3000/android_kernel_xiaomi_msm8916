@@ -413,6 +413,7 @@ struct smb1360_chip {
 	bool				batt_warm;
 	bool				batt_cool;
 	bool				batt_full;
+	bool				power_ok;
 	bool				resume_completed;
 	bool				irq_waiting;
 	bool				irq_disabled;
@@ -1127,6 +1128,7 @@ static enum power_supply_property smb1360_battery_properties[] = {
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_STATUS,
 	POWER_SUPPLY_PROP_PRESENT,
+	POWER_SUPPLY_PROP_TECHNOLOGY,
 	POWER_SUPPLY_PROP_CHARGING_ENABLED,
 	POWER_SUPPLY_PROP_CHARGE_TYPE,
 	POWER_SUPPLY_PROP_CAPACITY,
@@ -1159,6 +1161,9 @@ static int smb1360_get_prop_batt_status(struct smb1360_chip *chip)
 		pr_err("Couldn't read STATUS_3_REG rc=%d\n", rc);
 		return POWER_SUPPLY_STATUS_UNKNOWN;
 	}
+
+	if (!chip->power_ok)
+		return POWER_SUPPLY_STATUS_NOT_CHARGING;
 
 	pr_debug("STATUS_3_REG = %x\n", reg);
 
@@ -1951,6 +1956,9 @@ static int smb1360_battery_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_PRESENT:
 		val->intval = smb1360_get_prop_batt_present(chip);
 		break;
+	case POWER_SUPPLY_PROP_TECHNOLOGY:
+		val->intval = POWER_SUPPLY_TECHNOLOGY_LION;
+		break;
 	case POWER_SUPPLY_PROP_STATUS:
 		val->intval = smb1360_get_prop_batt_status(chip);
 		break;
@@ -2343,6 +2351,14 @@ static int chg_inhibit_handler(struct smb1360_chip *chip, u8 rt_stat)
 	return 0;
 }
 
+static int power_ok_handler(struct smb1360_chip *chip, u8 rt_stat)
+{
+	/*usbin power ok*/
+	pr_debug("rt_stat = 0x%02x\n", rt_stat);
+	chip->power_ok = rt_stat;
+	return 0;
+}
+
 static int delta_soc_handler(struct smb1360_chip *chip, u8 rt_stat)
 {
 	pr_debug("SOC changed! - rt_stat = 0x%02x\n", rt_stat);
@@ -2690,6 +2706,7 @@ static struct irq_handler_info handlers[] = {
 		{
 			{
 				.name		= "power_ok",
+				.smb_irq = power_ok_handler,
 			},
 			{
 				.name		= "unused",
@@ -4641,6 +4658,149 @@ static int smb1360_parse_jeita_params(struct smb1360_chip *chip)
 	return rc;
 }
 
+extern int power_supply_set_charging_enabled(struct power_supply *psy,
+													bool enabled);
+#if defined(CONFIG_BQ2022A_SUPPORT)
+extern int bq2022a_get_bat_module_id(void);
+#endif
+
+void smb1360_get_bat_character(struct smb1360_chip *chip)
+{
+	int rc;
+	int max_capacity = 0;
+	int capacity_coeff = 0;
+	int temp_coeff = 0;
+
+	switch (bq2022a_get_bat_module_id()) {
+	case 0:
+		max_capacity = 2200;
+		capacity_coeff = 0x8373;
+		temp_coeff = 0x85D2;
+		break;
+
+	case 1:
+		max_capacity = 2000;
+		capacity_coeff = 0x8819;
+		temp_coeff = 0x85D2;
+		break;
+
+	case 2:
+		max_capacity = 2000;
+		capacity_coeff = 0x8819;
+		temp_coeff = 0x85D2;
+		break;
+
+	case 3:
+		max_capacity = 2000;
+		capacity_coeff = 0x8819;
+		temp_coeff = 0x85D2;
+		break;
+
+	case 4:
+		max_capacity = 2000;
+		capacity_coeff = 0x8819;
+		temp_coeff = 0x85D2;
+		break;
+
+	case 5:
+		max_capacity = 2000;
+		capacity_coeff = 0x8819;
+		temp_coeff = 0x85E0;
+		break;
+
+	case 6:
+		max_capacity = 2000;
+		capacity_coeff = 0x8819;
+		temp_coeff = 0x85D2;
+		break;
+
+	case 7:
+		max_capacity = 2000;
+		capacity_coeff = 0x8819;
+		temp_coeff = 0x85E0;
+		break;
+
+	case 8:
+		max_capacity = 2200;
+		capacity_coeff = 0x8373;
+		temp_coeff = 0x85D2;
+		break;
+
+	case 9:
+		max_capacity = 2200;
+		capacity_coeff = 0x8373;
+		temp_coeff = 0x85E0;
+		break;
+
+	case 10:
+		max_capacity = 2200;
+		capacity_coeff = 0x8373;
+		temp_coeff = 0x85D2;
+		break;
+
+	case 17:
+		max_capacity = 2000;
+		capacity_coeff = 0x8819;
+		temp_coeff = 0x85D2;
+		break;
+
+	case 0xff:
+	default:
+		max_capacity = 0;
+		capacity_coeff = 0;
+		temp_coeff = 0;
+		pr_err("get battery ID error disable charge!!!\n");
+		rc = power_supply_set_charging_enabled(&(chip->batt_psy), 0);
+		if (rc)
+			pr_err("disable charging failed\n");
+		break;
+	}
+
+	if ((chip->batt_capacity_mah != -EINVAL) && (max_capacity))
+		chip->batt_capacity_mah = max_capacity;
+
+	if ((chip->cc_soc_coeff != -EINVAL) && (capacity_coeff))
+		chip->cc_soc_coeff = capacity_coeff;
+
+	if ((chip->fg_thermistor_c1_coeff != -EINVAL) && (temp_coeff))
+		chip->fg_thermistor_c1_coeff = temp_coeff;
+
+	pr_err("batt_capacity_mah=%d  cc_soc_coeff=0x%x  fg_thermistor_c1_coeff=0x%x \n",
+				chip->batt_capacity_mah, chip->cc_soc_coeff, chip->fg_thermistor_c1_coeff);
+}
+
+static int smb1360_update_power_on_state(struct smb1360_chip *chip)
+{
+	int i, j;
+	int rc;
+	u8 rt_stat;
+	struct smb_irq_info *info;
+
+	for (i = 0; i < ARRAY_SIZE(handlers); i++) {
+		if (handlers[i].stat_reg == IRQ_F_REG) {
+			rc = smb1360_read(chip, handlers[i].stat_reg,
+						&handlers[i].val);
+			if (rc < 0) {
+				dev_err(chip->dev, "Couldn't read %d rc = %d\n",
+						handlers[i].stat_reg, rc);
+				return -EPERM;
+			}
+			info = handlers[i].irq_info;
+			for (j = 0; j < ARRAY_SIZE(handlers[i].irq_info); j++) {
+				if (!strcmp(info[j].name, "power_ok")) {
+					rt_stat = handlers[i].val & (IRQ_STATUS_MASK << (j * BITS_PER_IRQ));
+					if (rt_stat) {
+						handlers[i].prev_val = handlers[i].val;
+						chip->power_ok = rt_stat;
+						pr_debug("chip->power_ok  = %d\n", chip->power_ok);
+					   }
+				}
+			}
+		}
+	}
+	return 0;
+}
+
 #define MAX_PARALLEL_CURRENT		540
 static int smb1360_parse_parallel_charging_params(struct smb1360_chip *chip)
 {
@@ -4977,12 +5137,15 @@ static int smb1360_probe(struct i2c_client *client,
 	chip->batt_psy.external_power_changed = smb1360_external_power_changed;
 	chip->batt_psy.property_is_writeable = smb1360_battery_is_writeable;
 
+	smb1360_update_power_on_state(chip);
 	rc = power_supply_register(chip->dev, &chip->batt_psy);
 	if (rc < 0) {
 		dev_err(&client->dev,
 			"Unable to register batt_psy rc = %d\n", rc);
 		goto fail_hw_init;
 	}
+
+	smb1360_get_bat_character(chip);
 
 	/* STAT irq configuration */
 	if (client->irq) {

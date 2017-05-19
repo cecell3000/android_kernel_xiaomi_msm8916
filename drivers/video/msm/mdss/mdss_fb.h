@@ -1,4 +1,5 @@
-/* Copyright (c) 2008-2016, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2008-2015, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2016 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -168,6 +169,7 @@ struct msm_mdp_interface {
 				struct mdp_histogram *hist);
 	int (*ad_calc_bl)(struct msm_fb_data_type *mfd, int bl_in,
 		int *bl_out, bool *bl_out_notify);
+	int (*ad_work_setup)(struct msm_fb_data_type *mfd);
 	int (*ad_shutdown_cleanup)(struct msm_fb_data_type *mfd);
 	int (*panel_register_done)(struct mdss_panel_data *pdata);
 	u32 (*fb_stride)(u32 fb_index, u32 xres, int bpp);
@@ -210,7 +212,6 @@ struct msm_fb_data_type {
 
 	struct panel_id panel;
 	struct mdss_panel_info *panel_info;
-	struct mdss_panel_info reconfig_panel_info;
 	int split_mode;
 	int split_fb_left;
 	int split_fb_right;
@@ -218,6 +219,7 @@ struct msm_fb_data_type {
 	u32 dest;
 	struct fb_info *fbi;
 
+	int dispparam_level;
 	int idle_time;
 	struct delayed_work idle_notify_work;
 
@@ -239,14 +241,13 @@ struct msm_fb_data_type {
 	int ext_ad_ctrl;
 	u32 ext_bl_ctrl;
 	u32 calib_mode;
-	u32 calib_mode_bl;
 	u32 ad_bl_level;
 	u32 bl_level;
 	u32 bl_scale;
 	u32 bl_min_lvl;
 	u32 unset_bl_level;
-	bool allow_bl_update;
-	u32 bl_level_scaled;
+	u32 bl_updated;
+	u32 bl_level_old;
 	struct mutex bl_lock;
 
 	struct platform_device *pdev;

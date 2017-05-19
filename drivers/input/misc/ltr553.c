@@ -66,6 +66,7 @@
 
 #define LTR553_BOOT_TIME_MS		120
 #define LTR553_WAKE_TIME_MS		10
+#define LTR553_ONDEMAND_WAKE_TIME_MS	10
 
 #define LTR553_PS_SATURATE_MASK		0x8000
 #define LTR553_ALS_INT_MASK		0x08
@@ -245,8 +246,9 @@ static struct sensors_classdev als_cdev = {
 	.version = 1,
 	.handle = SENSORS_LIGHT_HANDLE,
 	.type = SENSOR_TYPE_LIGHT,
-	.max_range = "65536",
-	.resolution = "1.0",
+	.max_range = "60000",
+	.resolution = "0.0125",
+	.min_delay = 0,
 	.sensor_power = "0.25",
 	.min_delay = 50000,
 	.max_delay = 2000,
@@ -265,8 +267,9 @@ static struct sensors_classdev ps_cdev = {
 	.version = 1,
 	.handle = SENSORS_PROXIMITY_HANDLE,
 	.type = SENSOR_TYPE_PROXIMITY,
-	.max_range = "7",
-	.resolution = "1.0",
+	.max_range = "5",
+	.resolution = "5.0",
+	.min_delay = 0,
 	.sensor_power = "0.25",
 	.min_delay = 10000,
 	.max_delay = 2000,
@@ -437,7 +440,7 @@ static int ltr553_parse_dt(struct device *dev, struct ltr553_data *ltr)
 		dev_err(dev, "read liteon,ps-pulses failed\n");
 		return rc;
 	}
-	if (value > 0x7) {
+	if (value > 0xf) {
 		dev_err(dev, "liteon,ps-pulses out of range\n");
 		return -EINVAL;
 	}
@@ -513,12 +516,12 @@ static int ltr553_parse_dt(struct device *dev, struct ltr553_data *ltr)
 	if (rc)
 		dev_warn(dev, "read liteon,als-equation-0 failed. Drop to default\n");
 
-	rc = of_property_read_u32_array(dp, "liteon,als-equation-0",
+	rc = of_property_read_u32_array(dp, "liteon,als-equation-1",
 			&eqtn_map[1].ch0_coeff_i, 6);
 	if (rc)
 		dev_warn(dev, "read liteon,als-equation-1 failed. Drop to default\n");
 
-	rc = of_property_read_u32_array(dp, "liteon,als-equation-0",
+	rc = of_property_read_u32_array(dp, "liteon,als-equation-2",
 			&eqtn_map[2].ch0_coeff_i, 6);
 	if (rc)
 		dev_warn(dev, "read liteon,als-equation-2 failed. Drop to default\n");
@@ -619,6 +622,13 @@ static int ltr553_init_device(struct ltr553_data *ltr)
 	if (rc) {
 		dev_err(&ltr->i2c->dev, "write %d register failed\n",
 				LTR553_REG_INTERRUPT_PERSIST);
+		return rc;
+	}
+
+	rc = regmap_write(ltr->regmap, LTR553_REG_PS_LED, ltr->ps_led);
+	if (rc) {
+		dev_err(&ltr->i2c->dev, "write %d register failed\n",
+				LTR553_REG_PS_LED);
 		return rc;
 	}
 
@@ -1399,6 +1409,7 @@ static void ltr553_als_disable_work(struct work_struct *work)
 exit:
 	mutex_unlock(&ltr->ops_lock);
 }
+
 
 static void ltr553_ps_enable_work(struct work_struct *work)
 {

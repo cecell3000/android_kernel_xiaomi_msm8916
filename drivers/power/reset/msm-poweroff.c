@@ -1,4 +1,5 @@
 /* Copyright (c) 2013-2015, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2016 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -32,6 +33,10 @@
 #include <soc/qcom/restart.h>
 #include <soc/qcom/watchdog.h>
 
+#ifdef CONFIG_KEXEC_HARDBOOT
+#include <asm/kexec.h>
+#endif
+
 #define EMERGENCY_DLOAD_MAGIC1    0x322A4F99
 #define EMERGENCY_DLOAD_MAGIC2    0xC67E4350
 #define EMERGENCY_DLOAD_MAGIC3    0x77777777
@@ -63,7 +68,13 @@ static void *emergency_dload_mode_addr;
 static bool scm_dload_supported;
 
 static int dload_set(const char *val, struct kernel_param *kp);
+
+#if defined(WT_DLOAD_MODE_SUPPORT) || defined(CONFIG_MSM_PRESERVE_MEM)
 static int download_mode = 1;
+#else
+static int download_mode;
+#endif
+
 module_param_call(download_mode, dload_set, param_get_int,
 			&download_mode, 0644);
 static int panic_prep_restart(struct notifier_block *this,
@@ -225,6 +236,13 @@ static void msm_restart_prepare(const char *cmd)
 
 	set_dload_mode(download_mode &&
 			(in_panic || restart_mode == RESTART_DLOAD));
+#endif
+
+#ifdef CONFIG_MSM_PRESERVE_MEM
+	need_warm_reset = true;
+#else
+	need_warm_reset = (get_dload_mode() ||
+				(cmd != NULL && cmd[0] != '\0'));
 #endif
 
 	if (qpnp_pon_check_hard_reset_stored()) {
@@ -480,8 +498,21 @@ static struct platform_driver msm_restart_driver = {
 	},
 };
 
+#ifdef CONFIG_KEXEC_HARDBOOT
+static void msm_kexec_hardboot_hook(void)
+{
+	set_dload_mode(0);
+
+	qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
+}
+#endif
+
 static int __init msm_restart_init(void)
 {
-	return platform_driver_register(&msm_restart_driver);
+    platform_driver_register(&msm_restart_driver);
+#ifdef CONFIG_KEXEC_HARDBOOT
+    kexec_hardboot_hook = msm_kexec_hardboot_hook;
+#endif
+    return 0;
 }
 device_initcall(msm_restart_init);

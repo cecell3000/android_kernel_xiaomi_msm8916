@@ -755,6 +755,14 @@ config SENSORS_LTR553
 	  To compile this driver as a module, choose M here: the
 	  module will be called ltr553.
 
+config PSENSOR_ONDEMAND_STATE
+	tristate "LTR553 proximity device driver ondemand state"
+	depends on I2C
+	help
+	  Say Y here if you want to get the proximity sensor state
+	  on demand.
+	  Author: Prema Chand Alugu (premaca@gmail.com)
+
 config SENSORS_MMC3416X
 	tristate "MMC3416xPJ 3-axis magnetic sensor driver"
 	depends on I2C
@@ -860,6 +868,34 @@ config SENSORS_BMI058
 	 If you say yes here, you get support for Bosch Sensortec's
 	 sensor driver of BMI058.
 
+config SENSORS_ELAN_EPL2182
+	tristate "ELAN EPL2182 proximity and ambient light sensor"
+	depends on I2C=y
+	help
+	  If you say yes here you get support for ELAN's light/proximity sensors epl2182.
+
+config SENSORS_ELAN_EPL259x
+	tristate "ELAN EPL259x proximity and ambient light sensor"
+	depends on I2C=y
+	help
+	  If you say yes here you get support for ELAN's light/proximity sensors epl259x.
+config INPUT_LTR559
+	   tristate "LTR559 light/proximity sensor support"
+	   depends on I2C
+	   default n
+	   help
+		 Driver for LTR559 light/proximity sensor.
+
+config SENSORS_YAS537
+	tristate "YAS Geomagnetic Sensor"
+	depends on I2C
+	help
+	  Say Y here if you want to enable the YAS537 magnetic sensor
+	  driver.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called yas537.
+
 config SENSORS_BMI160
 	tristate "BMI160 Sensor Support"
 	depends on I2C || SPI_MASTER
@@ -893,5 +929,15 @@ config SENSORS_BMI160_ENABLE_INT2
 	help
 	 If you say yes here, you get INT2 support for Bosch Sensortec
 	 sensors BMI160.
-endif
 
+config SENSORS_ST480
+	tristate "AKM09911 3-axis electronic compass sensor driver"
+	depends on I2C
+	help
+	  Say Y here if you want to enable the akm09911 ecompass sensor
+	  driver.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called akm09911.
+
+endif

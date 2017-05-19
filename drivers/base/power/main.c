@@ -1301,7 +1301,8 @@ int dpm_suspend(pm_message_t state)
  */
 static int device_prepare(struct device *dev, pm_message_t state)
 {
-	int (*callback)(struct device *) = NULL;
+	/* int (*callback)(struct device *) = NULL; */
+	pm_callback_t callback = NULL;
 	char *info = NULL;
 	int error = 0;
 
@@ -1339,10 +1340,11 @@ static int device_prepare(struct device *dev, pm_message_t state)
 		callback = dev->driver->pm->prepare;
 	}
 
-	if (callback) {
+	/* if (callback) {
 		error = callback(dev);
 		suspend_report_result(callback, error);
-	}
+	} */
+	error = dpm_run_callback(callback, dev, state, info);
 
 	device_unlock(dev);
 
