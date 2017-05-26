@@ -1124,6 +1124,9 @@ EXPORT_SYMBOL(wcnss_reset_intr);
 
 void wcnss_reset_fiq(bool clk_chk_en)
 {
+#ifdef CONFIG_MACH_WT88047
+	wcnss_reset_intr();
+#else
 	if (wcnss_hardware_type() == WCNSS_PRONTO_HW) {
 		if (clk_chk_en) {
 			wcnss_log_debug_regs_on_bite();
@@ -1138,6 +1141,7 @@ void wcnss_reset_fiq(bool clk_chk_en)
 	} else {
 		wcnss_riva_log_debug_regs();
 	}
+#endif
 }
 EXPORT_SYMBOL(wcnss_reset_fiq);
 
