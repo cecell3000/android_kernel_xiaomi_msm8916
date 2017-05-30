@@ -1213,8 +1213,10 @@ static int smb1360_get_prop_batt_health(struct smb1360_chip *chip)
 		ret.intval = POWER_SUPPLY_HEALTH_OVERHEAT;
 	else if (chip->batt_cold)
 		ret.intval = POWER_SUPPLY_HEALTH_COLD;
+#if 0
 	else if (chip->batt_warm)
 		ret.intval = POWER_SUPPLY_HEALTH_WARM;
+#endif
 	else if (chip->batt_cool)
 		ret.intval = POWER_SUPPLY_HEALTH_COOL;
 	else
