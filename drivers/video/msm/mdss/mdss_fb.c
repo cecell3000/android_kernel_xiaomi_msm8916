@@ -268,9 +268,9 @@ static void mdss_fb_set_bl_brightness(struct led_classdev *led_cdev,
 	   driver backlight level 0 to bl_max with rounding */
 	MDSS_BRIGHT_TO_BL(bl_lvl, value, mfd->panel_info->bl_max,
 				mfd->panel_info->brightness_max);
-		if ((bl_lvl < 3) && (bl_lvl != 0)) {
+		if ((bl_lvl < 7) && (bl_lvl != 0)) {
 
-			bl_lvl = 3;
+			bl_lvl = 7;
 		}
 
 	if (!bl_lvl && value)
